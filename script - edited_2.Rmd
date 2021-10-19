@@ -1,0 +1,396 @@
+---
+title: "BA810: Supervised Machine Learning"
+output: html_document
+---
+
+### Team Project: Predicting Prices of NYC Airbnbs
+
+#### Team 8
+
+-   Eunjin Jeong (U83102024)
+-   Lujain Alqassar (U85675324)
+-   Maria Stella Vardanega (U06003669)
+-   Yipeng Guo (U17061528)
+-   Yongxian Lun (U22529000)
+
+
+#### Objective: Help Consumer Accurately Select Satisfactory Airbnb
+According to the data set, we have their location, districts, number of reviews and other related factors. From consumers' perspective, we are thinking if we can reasonably predict the unknown prices of NYC Airbnbs, that will be a great help for people travelling to NYC. This will help them to accurately select the satisfactory Airbnb according to the price and region.
+
+#### Dataset: New York City Airbnb Open Data (Data source from http://insideairbnb.com/ )
+This data file includes all needed information to find out more about hosts, geographical availability, necessary metrics to make predictions and draw conclusions. And this public data set is part of Airbnb.
+
+#### Summary Of the Dataset
+Originally, after data cleansing, we have 38,821 rows and 16 columns including price in our data set. 
+
+To explore the factors that powerfully influence the price of Airbnb, we chose to narrow the features of our dataset down to the following variables:
+
+-   latitude
+-   longitude
+-   minimum_nights: minimum nights consumers should reserve
+-   number of reviews: total number of reviews this Airbnb received
+-   reviews per month: average number of reviews this Airbnb received monthly
+-   calculated_host_listing_count: amount of Airbnb per host
+-   availability_365: number of days when Airbnb is available for booking
+-   neighborhood generally: neighborhood this Airbnb lies (Manhattan, Brooklyn, Bronx, Queens -- we make them into dummy variables)
+-   room_type: Airbnb space type (Entire home/apt or private room -- we make them into dummy variables)
+
+#### 1. Basic Descriptive Analyses
+
+##### 1.1 Data Load and Cleansing
+```{r}
+#Library Loading
+library(data.table)
+library(ggplot2)
+library(ggthemes)
+library(scales)
+theme_set(theme_bw())
+library(glmnet)
+library(rpart)
+library(randomForest)
+library(gbm)
+library(dplyr)
+library(scales)
+```
+
+```{r}
+#Data Loading
+nyc <- fread('~/Documents/Fall/BA810/AB_NYC_2019.csv', stringsAsFactors = T)
+
+#Deleting NA values and price equals 0
+nyc [nyc ==""] <-NA
+nyc <- nyc[complete.cases(nyc),]
+str(nyc)
+nyc <- nyc[nyc$price != 0]
+
+#Creating dummy variables
+#neighborhood_group
+unique(nyc$neighbourhood_group)
+nyc$brooklyn <- ifelse(nyc$neighbourhood_group == "Brooklyn", 1, 0)
+nyc$manhattan <- ifelse(nyc$neighbourhood_group == "Manhattan", 1, 0)
+nyc$queens <- ifelse(nyc$neighbourhood_group == "Queens", 1, 0)
+nyc$bronx <- ifelse(nyc$neighbourhood_group == "Bronx", 1, 0)
+#room_Type
+unique(nyc$room_type)
+nyc$private_room <- ifelse(nyc$room_type == "Private room", 1, 0)
+nyc$shared_room <- ifelse(nyc$room_type == "Shared room", 1, 0)
+```
+
+\pagebreak
+
+##### 1.2 New York Airbnb Price Heat Map
+```{r}
+knitr::include_graphics("/Users/carosnote/desktop/price heat-map.png")
+
+```
+
+##### 1.3 Longitude and Latitude Scatterplot by Neighbourhoods
+```{r}
+ggplot(nyc, aes(x=longitude, y=latitude, col=neighbourhood_group)) +
+  geom_point() +
+  geom_jitter() +
+  labs(title="Longitude and Latitude Scatter plot by Neighbourhood")
+```
+
+
+##### 1.4 Relationship Between NYC Neighbourhoods and Airbnb Price
+```{r}
+#Calculating average price
+nyc %>% 
+  group_by(neighbourhood_group) %>%
+  summarise(average_price=mean(price))
+
+#Making plot
+ggplot(nyc, aes(x=neighbourhood_group, y=price, color=neighbourhood_group)) +
+  geom_point() +
+  theme_light() +
+  scale_colour_discrete("NYC Neighbourhoods") +
+  labs(title="Relationship between NYC Neighbourhoods and Airbnb Prices", y="Airbnb Price", x="NYC Neighbourhood")
+```
+##### 1.5 Relationship Between Number of Reviews and Airbnb Price
+
+```{r}
+ggplot(nyc, aes(x=number_of_reviews, y=price, color=neighbourhood_group)) +
+  geom_point() +
+  theme_light() +
+  scale_colour_discrete("NYC Neighbourhoods") +
+  labs(title="Number of Reviews and Airbnb Prices", y="Airbnb Price", x="Number of Reviews")
+```
+##### 1.6 Histogram of the Number of Availability
+```{r}
+ggplot(nyc, aes(x=availability_365, fill = neighbourhood_group)) +
+  geom_histogram(color="black", fill="blue") +
+  stat_bin(bins=10) +
+  labs(title="Histogram of Availability", y="count", x="Availability")
+```
+
+
+\pagebreak
+#### 2. Apply Machine Learning Models
+##### 2.1 Create Matrix and Target & Split Train and Test Set
+```{r}
+set.seed(1220)
+dt = sort(sample(nrow(nyc), nrow(nyc)*.8))
+train<- as.data.frame(nyc[dt,])
+test<- as.data.frame(nyc[-dt,])
+f1 <- as.formula(price ~ latitude + longitude +
+                   minimum_nights + number_of_reviews + reviews_per_month +
+                   calculated_host_listings_count + availability_365 + brooklyn +
+                   manhattan + queens + bronx + private_room + shared_room)
+
+x1_train <- model.matrix(f1, train)[, -1]
+y_train <- train$price
+x1_test <- model.matrix(f1, test)[, -1]
+y_test <- test$price
+```
+
+##### 2.2 Linear Regression
+```{r}
+set.seed(1220)
+#f1--Important--contain all the features
+fit.lm1 <- lm(f1, train)
+
+#MSE on the training data
+yhat.train.lm1 <- predict(fit.lm1)
+mse.train.lm1 <- mean((y_train - yhat.train.lm1)^2)
+
+#MSE on the test data
+yhat.test.lm1 <- predict(fit.lm1, test)
+mse.test.lm1 <- mean((y_test - yhat.test.lm1)^2)
+
+summary(fit.lm1)
+
+mse.test.lm1
+mse.train.lm1
+
+```
+
+Rationale: We fit the linear regression model to the dataset and found out MSE train is about 45,400 and MSE test is 31,445. Both of the MSEs are really large. To determine whether a linear model is better, we will compare it to other models. 
+
+```{r}
+plot(y_test, yhat.test.lm1, xlab='Actual', ylab='Predicted')
+```
+
+##### 2.3 Ridge Regression
+```{r}
+set.seed(1220)
+#Invoking ridge regression:
+fit.ridge <- glmnet(x1_train, y_train, alpha = 0)
+
+#Looking at the smallest lamdba:
+min(fit.ridge$lambda)
+```
+
+```{r}
+ridge.coef <- predict(fit.ridge,
+                      type = "coefficients",
+                      s = fit.ridge$lambda)
+
+#Plotting the coefficients as a function of lambda:
+to_plot <- data.table(
+  lambda = fit.ridge$lambda,
+  coef_value = ridge.coef[2, ]
+)
+ggplot(to_plot, aes(log(lambda), coef_value)) +
+  geom_line() +
+  theme_few()
+
+#Selecting the best value lambda for the hyper-parameter to use for our model:
+fit.ridge <- cv.glmnet(x1_train, y_train, alpha = 0, nfolds = 10)
+
+#Computing our train MSEs:
+yhat.train.ridge <- predict(fit.ridge, x1_train, s = fit.ridge$lambda.min)
+mse.train.ridge <- mean((y_train - yhat.train.ridge)^2)
+
+#Computing our test MSEs:
+yhat.test.ridge <- predict(fit.ridge, x1_test, s = fit.ridge$lambda.min)
+mse.test.ridge <- mean((y_test - yhat.test.ridge)^2)
+
+```
+```{r}
+#Inspecting the beta coefficients of our model:
+coef(fit.ridge)
+
+mse.test.ridge
+mse.train.ridge
+```
+
+Rationale: After fitting the model to the ridge regression model, we calculated both the MSE train and MSE test to see how it performs from the data we have to data we haven’t seen yet. The MSE train was 45,476 and the MSE test was 31,527. Compared to other models, it would most likely not be the best option.
+
+```{r}
+plot(y_test, yhat.test.ridge, xlab='Actual', ylab='Predicted')
+```
+
+##### 2.3 Lasso Regression
+```{r}
+set.seed(1220)
+fit.lasso <- cv.glmnet(x1_train, y_train, alpha=1, nfolds = 10)
+
+best_lambda <- fit.lasso$lambda.min
+best_lambda
+```
+
+```{r}
+plot(fit.lasso)
+```
+
+
+```{r}
+# Rebuilding the model with the best lambda value identified:
+lasso_best <- glmnet(x1_train, y_train, alpha=1, lambda=best_lambda)
+
+# Inspecting Beta Coefficients:
+coef(lasso_best)
+```
+
+```{r}
+#Computing our tain MSEs:
+yhat.train.lasso <- predict(lasso_best, s=best_lambda, newx = x1_train)
+mse.train.lasso <- mean((y_train - yhat.train.lasso)^2)
+
+#Computing our test MSEs:
+yhat.test.lasso <- predict(lasso_best, s=best_lambda, newx = x1_test)
+mse.test.lasso <- mean((y_test - yhat.test.lasso)^2)
+
+
+mse.test.lasso
+mse.train.lasso
+```
+
+Rationale: After fitting the model to the lasso regression, we calculated the MSE train and test to see how they compared to other models. The MSE test was about 45,400 and the MSE train was about 31,447.
+
+These will both be interpreted in the context of the other MSEs found for other models. 
+
+```{r}
+plot(y_test, yhat.test.lasso, xlab='Actual', ylab='Predicted')
+```
+
+##### 2.4 Decision Tree
+```{r}
+set.seed(1220)
+fit.tree <- rpart(f1,
+                  train,
+                  control = rpart.control(cp = 0.001))
+
+```
+
+```{r}
+# Computing our train MSEs:
+yhat.train.tree <- predict(fit.tree, train)
+mse.train.tree <- mean((yhat.train.tree - y_train) ^ 2)
+
+# Computing our trst MSEs:
+yhat.test.tree <- predict(fit.tree, test)
+mse.test.tree <- mean((yhat.test.tree - y_test) ^ 2)
+
+```
+
+```{r}
+mse.train.tree
+mse.test.tree
+```
+
+Rationale: After fitting the model to the decision tree we calculated the MSE train and test to see how they compared to other models. The MSE train was 29,302 whilst the MSE test was larger, as expected, amounting to: 36,265. 
+
+These will both be interpreted in the context of the other MSEs found for other models. 
+
+```{r}
+plot(y_test, yhat.test.tree, xlab='Actual', ylab='Predicted')
+```
+
+##### 2.5 Random Forest
+```{r}
+set.seed(1220)
+fit.rf <- randomForest(f1, train, do.trace=T, mtry=7, ntree=500)
+```
+```{r}
+#Computing our train MSEs:
+yhat.train.rf <- predict(fit.rf, train, ntree=500)
+mse.train.rf  <- mean((yhat.train.rf - y_train)^2)
+
+#Computing our test MSEs:
+yhat.test.rf <- predict(fit.rf, test, ntree=500)
+mse.test.rf <- mean((yhat.test.rf - y_test)^2)
+
+mse.train.rf
+mse.test.rf
+
+```
+Rationale: To fit the Random Forest model, we initially set the number of trees as 500 and hyper parameter m as 7. After fitting the model to the Random Forest we calculated the MSE train and MSE test. 
+
+The MSE train is 7331.46 and the MSE test is 38113.15, which seems our random forest model over fits to the train data set.
+
+```{r}
+plot(y_test, yhat.test.rf, xlab='Actual', ylab='Predicted')
+```
+
+##### 2.6 Boosting
+```{r}
+set.seed(1220)
+fit.btree <- gbm(f1,
+                 data = train,
+                 distribution = "gaussian",
+                 n.trees = 500,
+                 interaction.depth = 2,
+                 shrinkage = 0.001)
+
+relative.influence(fit.btree)
+
+```
+```{r}
+#Computing our train MSEs:
+yhat.train.btree <- predict(fit.btree, train, n.trees = 100)
+mse.train.btree <- mean((yhat.train.btree - y_train) ^ 2)
+
+#Computing our test MSEs:
+yhat.test.btree <- predict(fit.btree, test, n.trees = 100)
+mse.test.btree <- mean((yhat.test.btree - y_test) ^ 2)
+
+mse.train.btree
+mse.test.btree
+
+summary(fit.btree)
+```
+
+Rationale: By fitting the boosting model to the data set, we observed that MSE train is 30,953 and MSE test is 66,952. The MSE test here is slightly higher than the one in the linear model. We’ll compare models all together and discuss the results later. 
+
+```{r}
+plot(y_test, yhat.test.btree, xlab='Actual', ylab='Predicted')
+```
+\pagebreak
+#### 3. ML Model Performance
+##### 3.1 MSE Table
+```{r}
+mse.performance <- data.table(
+  TrainTest = c('MSE Train', 'MSE Train', 'MSE Train', 'MSE Train', 'MSE Train', 'MSE Train', 'MSE Test', 'MSE Test', 'MSE Test', 'MSE Test', 'MSE Test', 'MSE Test'),
+  MSE = c(mse.train.btree, mse.train.lasso, mse.train.lm1, mse.train.rf, mse.train.ridge, mse.train.tree, mse.test.btree, mse.test.lasso, mse.test.lm1, mse.test.rf, mse.test.ridge, mse.test.tree), 
+  Model = c('Boosting', 'Lasso', 'Linear Regression', 'Random Forest', 'Ridge', 'Decision Tree', 'Boosting', 'Lasso', 'Linear Regression', 'Random Forest', 'Ridge', 'Decision Tree')
+)
+
+mse.performance
+```
+```{r}
+ggplot(mse.performance, aes(Model, MSE, color=TrainTest, group=TrainTest)) +
+  geom_point() +
+  geom_line() +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+##### 3.2 RandomForest Feature Importance Plot
+```{r}
+#saving varImp object
+imp <- varImpPlot(fit.rf)
+
+#creating dataframe for plot
+imp <- as.data.frame(imp)
+imp$varnames <- rownames(imp)
+rownames(imp) <- NULL 
+#visualizing plot
+ggplot(imp, aes(x=reorder(varnames, IncNodePurity), y=IncNodePurity)) + 
+  geom_point(color = "blue", size=4) +
+  labs(title="Randomforest Feature Importance Plot", y="Inc Node Purity", x="Features") +
+  coord_flip() +
+  scale_y_continuous(labels = comma)
+```
+
+
